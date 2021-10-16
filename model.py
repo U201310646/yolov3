@@ -160,6 +160,7 @@ def load_model(model_config, weight_path):
     model.apply(weight_init)
 
 
+"""
 import cv2
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 weights_path = 'weights/yolov3.weights'
@@ -172,3 +173,5 @@ img = torch.tensor(img).permute(2, 0, 1).unsqueeze(0).float().to(device)
 
 out = model(img)
 print(out)
+"""
+
