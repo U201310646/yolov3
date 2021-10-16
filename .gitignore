@@ -2,3 +2,5 @@ data/coco
 weights/darknet53.conv.74
 weights/yolov3.weights
 weights/yolov3-tiny.weights
+.idea
+
