@@ -22,6 +22,19 @@ def create_dataset(train_path, image_size, mutiscale, batch_size, n_cpu):
     return dataloader
 
 
+def create_valid_dataset(valid_path, image_size, batch_size, n_cpu):
+    dataset = CustomDataset(valid_path,
+                            imgsize=image_size,
+                            transform=DEFAULT_TRANSFORM)
+    dataloader = DataLoader(dataset,
+                            batch_size,
+                            collate_fn=dataset.collate_fn,
+                            shuffle=False,
+                            pin_memory=True,
+                            num_workers=n_cpu)
+    return dataloader
+
+
 def run():
     parser = argparse.ArgumentParser(description=" Trains the YOLO model.")
     parser.add_argument("-d", "--data", type=str, default="config/coco.data", help="Path to data config file")
@@ -48,20 +61,29 @@ def run():
 
     # TODO: create the dataloader for training and validation
     mini_batch = model.hyper_params['batch'] // model.hyper_params['subdivisions']
-    train_dataloder = create_dataset(train_path,
-                                     model.hyper_params['width'],
-                                     args.mutiscale,
-                                     mini_batch,
-                                     args.n_cpu)
-    # valid_dataloader = create_valid_dataset(valid_path)
+    train_dataloader = create_dataset(train_path,
+                                      model.hyper_params['width'],
+                                      args.mutiscale,
+                                      mini_batch,
+                                      args.n_cpu)
+
+    valid_dataloader = create_valid_dataset(val_path,
+                                            model.hyper_params['width'],
+                                            mini_batch,
+                                            args.n_cpu)
+
     # TODO: definite optimizer
-    """
-    if mdoel.hyperparams["optimizer"] in ["Adam",None]:
-        optimizer = optim.Adam(params,lr,weight_decay)
-    else:
-        optimizer = optim.SGD(params,lr,weight_decay,momentum)
-    """
-    mini_batch = model.hyper_params['batch'] // model.hyper_params['subdivisions']
+    params = [p for p in model.parameters() if p.requires_grad]
+    if model.hyper_params['optimizer'] in ['Adam', None]:
+        optimizer = optim.Adam(params,
+                               lr=model.hyper_params['learning_rate'],
+                               weight_decay=model.hyper_params['decay'])
+    elif model.hyper_params['optimizer'] == 'sgd':
+        optimizer = optim.SGD(params,
+                              lr=model.hyper_params['learning_rate'],
+                              weight_decay=model.hyper_params['decay'],
+                              momentum=model.hyper_params['momentum'])
+
     # TODO: training phase
     """
     for epoch in range(args.epoch):
@@ -76,3 +98,5 @@ def run():
     """
 #   TODO: validation phase
 
+
+run()

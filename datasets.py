@@ -14,7 +14,7 @@ def resize(img, size):
 
 
 class CustomDataset(Dataset):
-    def __init__(self, path, imgsize=416, mutiscale=True, transform=None):
+    def __init__(self, path, imgsize=416, mutiscale=False, transform=None):
         self.labels_file = []
         with open(path, 'r') as f:
             self.img_file = f.readlines()
