@@ -1,8 +1,4 @@
-import os
-
-
 def parse_data_config(file_path):
-    os.chdir('../')
     with open(file_path, 'r') as f:
         config = dict()
         with open(file_path, 'r') as f:
@@ -13,6 +9,7 @@ def parse_data_config(file_path):
                     continue
                 key, value = line.split('=')
                 config[key.strip()] = value.strip()
+    return config
 
 
 def parse_model_config(model_config):

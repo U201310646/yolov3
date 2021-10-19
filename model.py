@@ -1,5 +1,8 @@
+import os
+
 import torch
 import torch.nn as nn
+import numpy as np
 import torch.nn.functional as F
 from utils.parse_config import parse_model_config
 
@@ -9,7 +12,7 @@ class Mish(nn.Module):
         super(Mish, self).__init__()
 
     def forward(self, x):
-        x * torch.tanh(F.softplus(x))
+        return x * torch.tanh(F.softplus(x))
 
 
 class Upsample(nn.Module):
@@ -36,6 +39,7 @@ class Yololayer(nn.Module):
 
         if not self.training:
             grid = self._mesh_grid(nx, ny).to(x.device)
+            # image coordinate
             x[..., :2] = (torch.sigmoid(x[..., :2]) + grid) * stride
             anchor_wh = self.anchors.clone().view(1, -1, 1, 1, 2)
             x[..., 2:4] = torch.exp(x[..., 2:4]) * anchor_wh
@@ -48,13 +52,23 @@ class Yololayer(nn.Module):
         return torch.stack(torch.meshgrid(torch.arange(nx), torch.arange(ny)), 2).view(1, 1, nx, ny, 2)
 
 
+def weight_init(module):
+    if isinstance(module, nn.Conv2d):
+        nn.init.normal_(module.weight, 0, 1)
+        # no bias if batch_normalization
+        # nn.init.constant_(module.bias, 0)
+    if isinstance(module, nn.BatchNorm2d):
+        nn.init.normal_(module.weight, 0, 1)
+        nn.init.constant_(module.bias, 0)
+
+
 def create_modules(model_defs):
     """
     :param model_defs: model definition from model.cfg [{},{},..]
     :return: (hyper_params, model_list)
             model_list: nn.ModuleList += [every layer create a Seqential]
     """
-    hyper_params = model_defs[0]
+    hyper_params = model_defs.pop(0)
     hyper_params.update({
         'batch': int(hyper_params.get('batch')),
         'subdivisions': int(hyper_params.get('subdivisions')),
@@ -78,7 +92,7 @@ def create_modules(model_defs):
     model_list = nn.ModuleList()
     output_filters = [int(hyper_params['channels'])]
 
-    for model_i, model_def in enumerate(model_defs[1:]):
+    for model_i, model_def in enumerate(model_defs):
         seq_model = nn.Sequential()
         if model_def['type'] == 'convolutional':
             filters = int(model_def['filters'])
@@ -135,7 +149,7 @@ class Darknet(nn.Module):
         yolo_outputs = []
         layer_outputs = []
         img_size = x.shape[2]
-        for model_def, module in zip(self.model_defs[1:], self.model_list):
+        for model_def, module in zip(self.model_defs, self.model_list):
             if model_def['type'] in ['convolutional', 'upsample']:
                 x = module(x)
             elif model_def['type'] == 'shortcut':
@@ -149,26 +163,32 @@ class Darknet(nn.Module):
 
         return yolo_outputs
 
+    def save_weights(self, checkpoint_path):
+        torch.save(self.state_dict(), checkpoint_path)
 
-def weight_init(module):
-    class_name = module.__class__.__name__
+    def load_weights(self, checkpoint_path):
+        self.load_state_dict(torch.load(checkpoint_path))
 
 
-def load_model(model_config, weight_path):
+def load_model(model_config, weight_path=None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = Darknet(model_config).to(device)
     model.apply(weight_init)
 
+    if weight_path:
+        model.load_weights(weight_path)
+    return model
 
-import cv2
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-weights_path = 'weights/yolov3.weights'
-model = Darknet(model_config='config/yolov3.cfg').to(device)
-model.eval()
-img_path = 'data/samples/dog.jpg'
-img = cv2.imread(img_path)
-img = cv2.resize(img, (416, 416))
-img = torch.tensor(img).permute(2, 0, 1).unsqueeze(0).float().to(device)
 
-out = model(img)
-print(out)
+def run():
+    import cv2
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = Darknet(model_config='config/yolov3.cfg').to(device)
+    model.eval()
+    img_path = 'data/samples/dog.jpg'
+    img = cv2.imread(img_path)
+    img = cv2.resize(img, (416, 416))
+    img = torch.tensor(img).permute(2, 0, 1).unsqueeze(0).float().to(device)
+    # img shape -- [B,C,H,W]
+    out = model(img)
+    print(out)
