@@ -80,8 +80,22 @@ def run():
     train_path = config['train']
 
     datasets = CustomDataset(train_path, 416, True, DEFAULT_TRANSFORM)
-    dataloader = DataLoader(datasets, batch_size=2, collate_fn=datasets.collate_fn)
+    dataloader = DataLoader(datasets, batch_size=2, collate_fn=datasets.collate_fn, shuffle=False)
     data = next(iter(dataloader))
-    print(data)
+    # print(data)
+    img_path, img, target = data
+    from model import load_model
+    model_config = 'config/yolov3.cfg'
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    target = target.to(device)
+    model = load_model(model_config).to(device)
+    img = img.to(device)
+    outputs = model(img)
 
+    # from utils.loss import build_target
+    # t_bbox, indices, anchors, t_cls = build_target(target, model)
 
+    from utils.loss import compute_loss
+    loss, loss_summary = compute_loss(outputs, target, model)
+
+    # print(loss_summary)

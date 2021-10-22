@@ -29,18 +29,21 @@ class Yololayer(nn.Module):
     def __init__(self, anchors):
         super(Yololayer, self).__init__()
         self.register_buffer('anchors', torch.tensor(anchors))
+        self.stride = None
+        self.wh = None
 
     def forward(self, x, img_size):
         na = len(self.anchors)
         b, _, nx, ny = x.shape
-        stride = img_size // nx
+        self.stride = img_size // nx
+        self.wh = nx
         # [N,255,W,H] --> [N,3,W,H,85]
         x = x.view(b, na, -1, nx, ny).permute(0, 1, 4, 3, 2).contiguous()
 
         if not self.training:
             grid = self._mesh_grid(nx, ny).to(x.device)
             # image coordinate
-            x[..., :2] = (torch.sigmoid(x[..., :2]) + grid) * stride
+            x[..., :2] = (torch.sigmoid(x[..., :2]) + grid) * self.stride
             anchor_wh = self.anchors.clone().view(1, -1, 1, 1, 2)
             x[..., 2:4] = torch.exp(x[..., 2:4]) * anchor_wh
             x[..., 4:] = x[..., 4:].sigmoid()
@@ -144,6 +147,7 @@ class Darknet(nn.Module):
         super(Darknet, self).__init__()
         self.model_defs = parse_model_config(model_config)
         self.hyper_params, self.model_list = create_modules(self.model_defs)
+        self.yolo_layer = [yolo[0] for yolo in self.model_list if isinstance(yolo[0], Yololayer)]
 
     def forward(self, x):
         yolo_outputs = []
@@ -164,6 +168,9 @@ class Darknet(nn.Module):
         return yolo_outputs
 
     def save_weights(self, checkpoint_path):
+        ckt_dir = os.path.dirname(checkpoint_path)
+        if not os.path.exists(ckt_dir):
+            os.mkdir(ckt_dir)
         torch.save(self.state_dict(), checkpoint_path)
 
     def load_weights(self, checkpoint_path):

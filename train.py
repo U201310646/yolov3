@@ -1,12 +1,20 @@
 import argparse
+import os.path
+
 import torch
+import tqdm
+from utils.tools import use_determinism
 from model import load_model
 import torch.optim as optim
 from utils.parse_config import parse_data_config
 from datasets import CustomDataset
 from torch.utils.data import DataLoader
 from utils.transform import DEFAULT_TRANSFORM
-
+from utils.loss import compute_loss
+import torch.utils.tensorboard as tensorboard
+from torchsummary import summary
+from terminaltables import AsciiTable
+import datetime
 
 def create_dataset(train_path, image_size, mutiscale, batch_size, n_cpu):
     dataset = CustomDataset(train_path,
@@ -39,14 +47,24 @@ def run():
     parser = argparse.ArgumentParser(description=" Trains the YOLO model.")
     parser.add_argument("-d", "--data", type=str, default="config/coco.data", help="Path to data config file")
     parser.add_argument("-m", "--model", type=str, default="config/yolov3.cfg", help="Path to the model definition")
-    parser.add_argument("-p", "--pretrained_weights", type=str, default="weights/yolov3.weight.pth",
+    parser.add_argument("-p", "--pretrained_weights", type=str, default="weights/darknet53_conv74.pth",
                         help="Path to the pretrained model weights")
     parser.add_argument("-e", "--epoch", type=int, default=50, help="definite the training epochs")
     parser.add_argument("--valid_interval", type=int, default=1, help="epoch interval for once evaluation")
-    parser.add_argument("--logdir", type=str, default="logs", help="logdir for tensorboard ")
+    parser.add_argument("--log_dir", type=str, default="logs", help="log dir for tensorboard ")
     parser.add_argument("--n_cpu", type=int, default=4, help="number of workers in dataloader")
     parser.add_argument('--mutiscale', type=bool, default=False, help=" if use mutiscaled images for training")
+    parser.add_argument('--checkpoint_epoch_interval', type=int, default=1, help="interval of epoch to save weights")
+    parser.add_argument('--seed', type=int, default=-1, help="make result reproducible")
+    parser.add_argument('--verbose', action="store_true", help="show more verbose")
     args = parser.parse_args()
+
+    # seed for cudnn, pytorch, numpy, python
+    if args.seed != -1:
+        use_determinism(args.seed)
+    # tensorboard
+    log_dir = os.path.join(args.log_dir, datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+    writer = tensorboard.SummaryWriter(log_dir)
 
     # TODO: parse the data config file
     data_config = parse_data_config(args.data)
@@ -58,6 +76,9 @@ def run():
     # TODO: build the YOLOv3 model --> model.hyperparams: yolov3.cfg [net], optimizer = args.optim
 
     model = load_model(args.model, args.pretrained_weights).to(device)
+    if args.verbose:
+        summary(model, input_size=(model.hyper_params["channels"], model.hyper_params["height"],
+                                   model.hyper_params["width"]), batch_size=1, device="cuda")
 
     # TODO: create the dataloader for training and validation
     mini_batch = model.hyper_params['batch'] // model.hyper_params['subdivisions']
@@ -85,18 +106,56 @@ def run():
                               momentum=model.hyper_params['momentum'])
 
     # TODO: training phase
-    """
+    model.train()
+    print("\n---model training--\n")
     for epoch in range(args.epoch):
-         for batch, (imgs, targets) in enumerate(train_dataloader):
-             batch_done = batch + len(train_dataloader)*epoch
-             outputs = model(imgs)
-             loss = compute_loss(outputs, targets)
-             loss.backward()
-             if batch_done % mini_batch == 0:
-                 optimizer.step()
-                 optimizer.zero_grad()
-    """
-#   TODO: validation phase
+        for batch_i, (img_path, images, targets) in enumerate(tqdm.tqdm(train_dataloader,
+                                                                        desc=f"training epoch {epoch}")):
+            batch_done = batch_i + epoch * len(train_dataloader)
+            images = images.to(device)
+            outputs = model(images)
+            targets = targets.to(device)
+            loss, loss_summary = compute_loss(outputs, targets, model)
+            loss.backward()
+
+            l_box, l_obj, l_cls, loss = loss_summary
+            writer.add_scalar("l_box", l_box.item(), batch_done)
+            writer.add_scalar("l_obj", l_obj.item(), batch_done)
+            writer.add_scalar("l_cls", l_cls.item(), batch_done)
+            writer.add_scalar("loss", loss.item(), batch_done)
+
+            lr_steps = model.hyper_params["lr_steps"]
+            lr = model.hyper_params["learning_rate"]
+            burn_in = model.hyper_params["burn_in"]
+            if batch_done < burn_in:
+                lr *= (batch_done / burn_in)
+            else:
+                for lr_scale, steps in lr_steps:
+                    if batch_done > steps:
+                        lr *= lr_scale
+            optimizer.param_groups[0]["lr"] = lr
+
+            writer.add_scalar("learning rate", lr, batch_done)
+
+            if batch_done % mini_batch == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+
+        if epoch % args.checkpoint_epoch_interval == 0:
+            checkpoint_path = f"checkpoints/yolov3_ckpt_{epoch}.pth"
+            print(f"---- Saving checkpoint to: '{checkpoint_path}' ----")
+            model.save_weights(checkpoint_path)
+
+        if args.verbose:
+            table = [["Type", "loss"],
+                     ["loss of iou", round(l_box.item(), 6)],
+                     ["loss of obj", round(l_obj.item(), 6)],
+                     ["loss of class", round(l_cls.item(), 6)],
+                     ["total loss", round(loss.item(), 6)]]
+
+            print(AsciiTable(table).table)
+
+    # TODO: validation phase
 
 
 run()
